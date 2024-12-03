@@ -1,0 +1,51 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+env/
+venv/
+ENV/
+*.env
+*.venv
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Configuration and sensitive files
+*.env
+config.ini
+config.json
+
+# macOS file system files
+.DS_Store
+
+# Temporary files and logs
+*.log
+*.csv
+*.xlsx
+*.tmp
+*.bak
+
+# System files
+Thumbs.db
+desktop.ini
+
+# Undetected ChromeDriver cache
+undetected_chromedriver/
+undetected_chromedriver/logs/
+
+# Python package directories
+build/
+dist/
+*.egg-info/
+
+# VSCode settings
+.vscode/
+
+# 2Captcha API key (if stored in a file)
+api_key.txt
+
+# Ignore any Excel file in general
+*.xls*
