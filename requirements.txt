@@ -1,5 +1,5 @@
-selenium==4.15.2
-pandas==2.1.1
-openpyxl==3.1.2
-numpy==1.23.0
-undetected-chromedriver==3.0.6
+selenium
+pandas
+openpyxl
+numpy
+undetected-chromedriver

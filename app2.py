@@ -10,7 +10,6 @@ import time
 def resolver_captcha(api_key, site_key, page_url):
     print("Enviando CAPTCHA para resolução via 2Captcha...")
 
-    # Enviar o CAPTCHA para o serviço
     response = requests.post(
         "http://2captcha.com/in.php",
         data={
@@ -36,28 +35,26 @@ def resolver_captcha(api_key, site_key, page_url):
             return res.text.split("|")[1]
         elif res.text == "ERROR_CAPTCHA_UNSOLVABLE":
             print("CAPTCHA impossível de resolver. Tentando novamente...")
-            break  # Tenta novamente
+            break
 
     raise Exception("Tempo excedido para resolver o CAPTCHA.")
 
 # Função principal
 def consulta_multas(renavam, cpf_cnpj):
     url = "https://www.detran.rj.gov.br/_monta_aplicacoes.asp?cod=11&tipo=consulta_multa"
-    site_key = "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI"  # Substitua pelo sitekey real do reCAPTCHA
-    api_key = "13a1288df1b6d6145a00476d48bf1c2b"  # Sua chave API da 2Captcha
+    site_key = "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI"
+    api_key = "13a1288df1b6d6145a00476d48bf1c2b"
 
-    # Configuração para abrir o Chrome com undetected-chromedriver
     options = uc.ChromeOptions()
-    options.add_argument("--start-maximized")  # Abre o navegador maximizado
+    options.add_argument("--start-maximized")
 
-    # Inicializa o `chromedriver` com `undetected_chromedriver`
     driver = uc.Chrome(options=options)
     driver.get(url)
 
     try:
         print(f"Iniciando consulta para RENAVAM: {renavam}, CPF/CNPJ: {cpf_cnpj}")
 
-        # Tentar fechar modal de cookies, mas ignorar se não for possível
+        # Fechar modal de cookies
         try:
             WebDriverWait(driver, 5).until(
                 EC.element_to_be_clickable((By.XPATH, '//*[@id="adopt-accept-all-button"]'))
@@ -83,29 +80,26 @@ def consulta_multas(renavam, cpf_cnpj):
             print("Erro: Nenhum iframe correspondente encontrado.")
             return "Erro no iframe"
 
-        # Preencher o campo RENAVAM
-        campo_renavam = WebDriverWait(driver, 5).until(
+        # Preencher os campos
+        campo_renavam = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.ID, "MultasRenavam"))
         )
         campo_renavam.clear()
         campo_renavam.send_keys(renavam)
         print("Campo RENAVAM preenchido.")
 
-        # Preencher o campo CPF/CNPJ
-        campo_cpf_cnpj = WebDriverWait(driver, 5).until(
+        campo_cpf_cnpj = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.ID, "MultasCpfcnpj"))
         )
         campo_cpf_cnpj.clear()
         campo_cpf_cnpj.send_keys(cpf_cnpj)
         print("Campo CPF/CNPJ preenchido.")
 
-        # Voltar para o contexto principal
         driver.switch_to.default_content()
 
         # Resolver o CAPTCHA
         captcha_token = resolver_captcha(api_key, site_key, url)
 
-        # Localizar o iframe do CAPTCHA e inserir o token
         captcha_iframe = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.XPATH, "//iframe[contains(@src, 'recaptcha')]"))
         )
@@ -115,11 +109,12 @@ def consulta_multas(renavam, cpf_cnpj):
         )
         print("CAPTCHA resolvido e inserido no formulário.")
 
-        # Voltar para o contexto principal
         driver.switch_to.default_content()
 
-        # Submeter o formulário clicando no botão correto
-        botao_consultar = WebDriverWait(driver, 5).until(
+        # Aguarde para garantir que o botão esteja ativo
+        time.sleep(3)
+
+        botao_consultar = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, '//*[@id="btPesquisar"]'))
         )
         botao_consultar.click()
@@ -141,7 +136,7 @@ def consulta_multas(renavam, cpf_cnpj):
         driver.quit()
 
 # Carregar dados da planilha Excel
-file_path = "Consulta Multas.xlsx"  # Caminho do arquivo Excel
+file_path = "Consulta Multas.xlsx"
 veiculos_df = pd.read_excel(file_path, sheet_name="Planilha1")
 
 # Processar consultas
