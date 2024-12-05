@@ -1,5 +1,6 @@
-selenium
-pandas
-openpyxl
-numpy
-undetected-chromedriver
+twocaptcha==1.1.0
+selenium==4.11.2
+selenium-wire==4.6.2
+undetected-chromedriver==3.4.6
+requests==2.31.0         # Para chamadas HTTP (caso seja usado diretamente em alguma parte do código)
+pandas==2.1.1            # Para manipulação de arquivos Excel ou CSV (se for usado no projeto)

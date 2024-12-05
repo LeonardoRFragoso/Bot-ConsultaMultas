@@ -1,207 +1,214 @@
-import undetected_chromedriver as uc
+import sys
+import os
+from seleniumwire import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import requests
+from twocaptcha import TwoCaptcha
+import pandas as pd
 import time
-import os
 
+# Configurações globais
+FRAME_CONSULTA_XPATH = "//*[@id='frameConsulta']"
+CAPTCHA_IFRAME_XPATH = "//*[@id='divCaptcha']/div/div/iframe"
+RECAPTCHA_BUTTON_XPATH = "//*[@id='recaptcha-anchor']"
+CONSULTAR_BUTTON_XPATH = "//*[@id='btPesquisar']"
+API_KEY = "13a1288df1b6d6145a00476d48bf1c2b"
 
-# Função para resolver o CAPTCHA via 2Captcha
-def resolver_captcha(api_key, site_key, page_url):
-    print("Enviando CAPTCHA para resolução via 2Captcha...")
-
-    response = requests.post(
-        "http://2captcha.com/in.php",
-        data={
-            "key": api_key,
-            "method": "userrecaptcha",
-            "googlekey": site_key,
-            "pageurl": page_url
-        }
-    )
-    
-    if "OK|" not in response.text:
-        raise Exception(f"Erro ao enviar CAPTCHA: {response.text}")
-    
-    captcha_id = response.text.split("|")[1]
-    print(f"CAPTCHA enviado. ID: {captcha_id}")
-
-    for _ in range(60):  # Aguarda até 60 segundos
-        time.sleep(5)
-        res = requests.get(f"http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}")
-        if res.text.startswith("OK|"):
-            print("CAPTCHA resolvido com sucesso.")
-            return res.text.split("|")[1]
-        elif res.text == "ERROR_CAPTCHA_UNSOLVABLE":
-            print("CAPTCHA impossível de resolver. Tentando novamente...")
-            break
-
-    raise Exception("Tempo excedido para resolver o CAPTCHA.")
-
-
-# Função principal
-def consulta_multas(renavam, cpf_cnpj):
-    url = "https://www.detran.rj.gov.br/_monta_aplicacoes.asp?cod=11&tipo=consulta_multa"
-    site_key = "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI"
-    api_key = "13a1288df1b6d6145a00476d48bf1c2b"
-
-    # Configurar as opções do Chrome
-    options = uc.ChromeOptions()
-    options.add_argument("--start-maximized")
-    options.add_argument("--disable-popup-blocking")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-infobars")
-
-    # Inicializar o driver
-    driver = uc.Chrome(options=options)
-    driver.get(url)
-
+def resolver_captcha(site_key, page_url):
+    solver = TwoCaptcha(API_KEY)
+    print("Resolving CAPTCHA via 2Captcha...")
     try:
-        print(f"\nIniciando consulta para RENAVAM: {renavam}, CPF/CNPJ: {cpf_cnpj}")
+        result = solver.recaptcha(sitekey=site_key, url=page_url)
+        print("CAPTCHA resolved:", result)
+        return result['code']
+    except Exception as e:
+        print("CAPTCHA resolution failed:", e)
+        raise
 
-        # Fechar modal de cookies, se presente
+def encontrar_g_recaptcha_response(driver):
+    """Busca o elemento 'g-recaptcha-response' no HTML e nos iframes."""
+    print("Searching for 'g-recaptcha-response' element in the page and all iframes...")
+    
+    # Primeiro, tenta localizar o elemento no HTML principal da página
+    try:
+        recaptcha_response_element = driver.find_element(By.ID, "g-recaptcha-response")
+        print("'g-recaptcha-response' element found in the main HTML.")
+        return recaptcha_response_element  # Retorna o elemento encontrado
+    except Exception:
+        print("'g-recaptcha-response' element not found in the main HTML.")
+
+    # Se não encontrar no HTML principal, tenta localizar nos iframes
+    driver.switch_to.default_content()  # Garante que começamos do contexto principal
+    iframes = driver.find_elements(By.TAG_NAME, "iframe")
+    for iframe in iframes:
         try:
-            WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.ID, "adopt-accept-all-button"))
-            ).click()
-            print("Modal de cookies fechado com sucesso.")
+            driver.switch_to.frame(iframe)
+            print(f"Checking iframe: {iframe.get_attribute('src')}")
+            # Tenta localizar o elemento dentro do iframe atual
+            recaptcha_response_element = driver.find_element(By.ID, "g-recaptcha-response")
+            print("'g-recaptcha-response' element found in iframe.")
+            return recaptcha_response_element  # Retorna o elemento encontrado
         except Exception:
-            print("Modal de cookies não encontrado ou não disponível. Continuando...")
+            # Se não encontrar o elemento, volta ao contexto principal e tenta o próximo iframe
+            driver.switch_to.default_content()
+            continue
+    
+    print("Error: 'g-recaptcha-response' element not found in the page or any iframe!")
+    raise Exception("'g-recaptcha-response' element not found in the page or any iframe!")
 
-        # Localizar o iframe do formulário
-        try:
-            form_iframe = WebDriverWait(driver, 15).until(
-                EC.frame_to_be_available_and_switch_to_it((By.ID, "frameConsulta"))
-            )
-            print("Contexto alterado para o iframe do formulário.")
-        except Exception as e:
-            print(f"Erro ao localizar o iframe do formulário: {e}")
-            salvar_arquivos_debug(driver, renavam)
-            return f"Erro ao acessar o formulário para RENAVAM {renavam}."
+def inserir_token_captcha(driver):
+    try:
+        # Alterar para o iframe principal (frameConsulta)
+        print("Switching to main iframe (frameConsulta)...")
+        WebDriverWait(driver, 20).until(
+            EC.frame_to_be_available_and_switch_to_it((By.XPATH, FRAME_CONSULTA_XPATH))
+        )
 
-        # Preencher o campo RENAVAM
-        try:
-            campo_renavam = WebDriverWait(driver, 15).until(
-                EC.element_to_be_clickable((By.ID, "MultasRenavam"))
-            )
-            campo_renavam.clear()
-            campo_renavam.send_keys(renavam)
-            print("Campo RENAVAM preenchido.")
-        except Exception as e:
-            print(f"Erro ao preencher o campo RENAVAM: {e}")
-            salvar_arquivos_debug(driver, renavam)
-            return f"Erro ao preencher o RENAVAM {renavam}."
+        # Alterar para o iframe do CAPTCHA para interagir com o checkbox
+        print("Switching to reCAPTCHA iframe to interact with the checkbox...")
+        WebDriverWait(driver, 20).until(
+            EC.frame_to_be_available_and_switch_to_it((By.XPATH, CAPTCHA_IFRAME_XPATH))
+        )
 
-        # Preencher o campo CPF/CNPJ
-        try:
-            campo_cpf_cnpj = WebDriverWait(driver, 15).until(
-                EC.element_to_be_clickable((By.ID, "MultasCpfcnpj"))
-            )
-            campo_cpf_cnpj.clear()
-            campo_cpf_cnpj.send_keys(cpf_cnpj)
-            print("Campo CPF/CNPJ preenchido.")
-        except Exception as e:
-            print(f"Erro ao preencher o campo CPF/CNPJ: {e}")
-            salvar_arquivos_debug(driver, renavam)
-            return f"Erro ao preencher o CPF/CNPJ para RENAVAM {renavam}."
+        # Clicar no botão "Eu não sou um robô"
+        print("Clicking reCAPTCHA checkbox...")
+        WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, RECAPTCHA_BUTTON_XPATH))
+        ).click()
 
-        # Voltar para o contexto principal
+        # Voltar ao contexto do iframe principal (frameConsulta)
+        print("Switching back to main iframe (frameConsulta)...")
         driver.switch_to.default_content()
+        driver.switch_to.frame(driver.find_element(By.XPATH, FRAME_CONSULTA_XPATH))
 
-        # Resolver o CAPTCHA
-        try:
-            captcha_token = resolver_captcha(api_key, site_key, url)
-        except Exception as e:
-            print(f"Erro ao resolver o CAPTCHA: {e}")
-            salvar_arquivos_debug(driver, renavam)
-            return f"Erro ao resolver o CAPTCHA para RENAVAM {renavam}."
+        # Obter o sitekey do CAPTCHA
+        print("Extracting sitekey from the main iframe...")
+        sitekey_element = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.XPATH, "//*[@id='divCaptcha']"))
+        )
+        site_key = sitekey_element.get_attribute("data-sitekey")
+        print(f"Sitekey extracted: {site_key}")
 
-        # Inserir o token resolvido e verificar CAPTCHA
-        try:
-            print("Alterando para o contexto do iframe do CAPTCHA...")
-            
-            # Localizar o iframe do reCAPTCHA
-            iframe = WebDriverWait(driver, 20).until(
-                EC.frame_to_be_available_and_switch_to_it(
-                    (By.XPATH, "//iframe[contains(@src, 'https://www.google.com/recaptcha/api2/anchor')]")
-                )
-            )
-            print("Confirmação: Contexto alterado para o iframe do CAPTCHA com sucesso.")
+        # Resolver o CAPTCHA usando a API 2Captcha
+        page_url = driver.current_url
+        captcha_token = resolver_captcha(site_key, page_url)
 
-            # Salvar o DOM do iframe do CAPTCHA
-            with open("debug/dom_captcha.html", "w", encoding="utf-8") as f:
-                f.write(driver.page_source)
-            print("DOM do iframe do CAPTCHA salvo para depuração.")
+        # Localizar o elemento 'g-recaptcha-response' dinamicamente (tanto no HTML quanto nos iframes)
+        recaptcha_response_element = encontrar_g_recaptcha_response(driver)
 
-            # Tentar localizar e clicar no botão "Não sou um robô"
-            print("Tentando localizar o botão 'Não sou um robô'...")
-            captcha_checkbox = WebDriverWait(driver, 20).until(
-                EC.element_to_be_clickable((By.ID, "recaptcha-anchor"))
-            )
-            captcha_checkbox.click()
-            print("Botão 'Não sou um robô' clicado com sucesso.")
+        # Inserir o token no elemento encontrado
+        print("Inserting token into 'g-recaptcha-response'...")
+        driver.execute_script(""" 
+            arguments[0].value = arguments[1];
+            arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+            arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
+        """, recaptcha_response_element, captcha_token)
 
-            # Inserir o token resolvido
-            print("Tentando inserir o token resolvido no campo 'g-recaptcha-response'...")
-            driver.execute_script(
-                'document.getElementById("g-recaptcha-response").style.display = "block";'
-                f'document.getElementById("g-recaptcha-response").innerHTML = "{captcha_token}";'
-            )
-            print("Token resolvido inserido no CAPTCHA com sucesso.")
-        except Exception as e:
-            print(f"Erro ao alterar para o contexto ou interagir com o CAPTCHA: {e}")
-            salvar_arquivos_debug(driver, renavam)
-            return f"Erro ao interagir com o CAPTCHA para RENAVAM {renavam}."
+        # Confirmar se o valor foi atualizado corretamente no elemento
+        token_value = driver.execute_script("return arguments[0].value;", recaptcha_response_element)
+        if token_value == captcha_token:
+            print("Token successfully inserted into 'g-recaptcha-response'.")
+        else:
+            print(f"Error: Token insertion failed! Expected: {captcha_token}, but found: {token_value}")
+            raise Exception("Token insertion verification failed!")
 
-        # Voltar ao contexto principal e clicar no botão
-        try:
-            driver.switch_to.default_content()
-            form_iframe = WebDriverWait(driver, 15).until(
-                EC.frame_to_be_available_and_switch_to_it((By.ID, "frameConsulta"))
-            )
-            print("Contexto alterado com sucesso para o iframe do formulário.")
+        # Confirmar que o CAPTCHA foi validado com sucesso
+        print("Checking for reCAPTCHA checkmark...")
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.CLASS_NAME, "recaptcha-checkbox-checkmark"))
+        )
+        print("reCAPTCHA validated successfully.")
 
-            botao_consultar = WebDriverWait(driver, 15).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "#btPesquisar"))
-            )
-            botao_consultar.click()
-            print("Botão 'Consultar' clicado com sucesso.")
-        except Exception as e:
-            print(f"Erro ao clicar no botão 'Consultar': {e}")
-            salvar_arquivos_debug(driver, renavam)
-            return f"Erro ao clicar no botão 'Consultar' para RENAVAM {renavam}."
+        # Voltar ao iframe principal antes de clicar no botão CONSULTAR
+        print("Switching back to main iframe (frameConsulta) before clicking CONSULTAR...")
+        driver.switch_to.default_content()
+        driver.switch_to.frame(driver.find_element(By.XPATH, FRAME_CONSULTA_XPATH))
 
-        # Aguardar resultados
-        try:
-            driver.switch_to.default_content()
-            resultados_element = WebDriverWait(driver, 30).until(
-                EC.presence_of_element_located((By.XPATH, '//*[@id="caixaGeral"]/div[2]/div[2]'))
-            )
-            resultados = resultados_element.text
-            print("Consulta realizada com sucesso.")
-            return resultados
-        except Exception as e:
-            print(f"Erro ao obter os resultados: {e}")
-            salvar_arquivos_debug(driver, renavam)
-            return f"Erro ao obter os resultados para RENAVAM {renavam}."
+        # Remover o overlay que está bloqueando o clique no botão CONSULTAR
+        print("Removing potential overlays blocking the CONSULTAR button...")
+        driver.execute_script(""" 
+            var overlay = document.querySelector('div[style*="z-index: 2000000000"]');
+            if (overlay) {
+                overlay.remove();
+            }
+        """)
+
+        # Clicar no botão CONSULTAR
+        print("Clicking 'CONSULTAR' button...")
+        WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((By.XPATH, CONSULTAR_BUTTON_XPATH))
+        ).click()
+        print("Button clicked.")
 
     except Exception as e:
-        print(f"Erro inesperado durante a consulta: {e}")
-        salvar_arquivos_debug(driver, renavam)
-        return f"Erro geral ao realizar a consulta para RENAVAM {renavam}."
+        print("Error inserting CAPTCHA token:", e)
+        raise
 
+
+def consulta_multas(renavam, cpf_cnpj):
+    url = "https://www.detran.rj.gov.br/_monta_aplicacoes.asp?cod=11&tipo=consulta_multa"
+
+    options = webdriver.ChromeOptions()
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    driver = webdriver.Chrome(options=options)
+    driver.set_page_load_timeout(60)
+
+    try:
+        print(f"Processing RENAVAM: {renavam}, CPF/CNPJ: {cpf_cnpj}")
+        driver.get(url)
+        
+        # Aceitar cookies, se necessário
+        try:
+            WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, "//*[@id='adopt-accept-all-button']"))
+            ).click()
+        except:
+            print("No cookies to accept.")
+
+        # Preencher o formulário
+        driver.switch_to.frame("frameConsulta")
+        WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((By.ID, "MultasRenavam"))
+        ).send_keys(str(renavam))
+        WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((By.ID, "MultasCpfcnpj"))
+        ).send_keys(str(cpf_cnpj))
+        driver.switch_to.default_content()
+
+        # Inserir CAPTCHA
+        inserir_token_captcha(driver)
+
+        # Verificar o resultado
+        print("Waiting for results...")
+        driver.switch_to.default_content()
+        driver.switch_to.frame("frameConsulta")
+        result_element = WebDriverWait(driver, 30).until(
+            EC.presence_of_element_located((By.XPATH, "//*[@id='caixaInformacao']"))
+        )
+        result = result_element.text
+        print("Results loaded successfully:", result)
+        return result
+    except Exception as e:
+        print("Error:", e)
+        return f"Error processing RENAVAM {renavam}"
     finally:
         driver.quit()
 
+if __name__ == "__main__":
+    input_file = "Consulta Multas.xlsx"
+    output_file = "Resultados Multas.xlsx"
 
-# Função para salvar arquivos de depuração
-def salvar_arquivos_debug(driver, renavam):
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
-    os.makedirs("debug", exist_ok=True)
-
-    driver.save_screenshot(f"debug/screenshot_{renavam}_{timestamp}.png")
-    with open(f"debug/dom_{renavam}_{timestamp}.html", "w", encoding="utf-8") as f:
-        f.write(driver.page_source)
-
-    print("Arquivos de depuração salvos.")
+    try:
+        df = pd.read_excel(input_file)
+        results = []
+        for _, row in df.iterrows():
+            renavam = row["RENAVAM"]
+            cpf_cnpj = row["CPF/CNPJ"]
+            result = consulta_multas(renavam, cpf_cnpj)
+            results.append({"RENAVAM": renavam, "CPF/CNPJ": cpf_cnpj, "Result": result})
+        pd.DataFrame(results).to_excel(output_file, index=False)
+        print("Results saved.")
+    except Exception as e:
+        print("Error:", e)
