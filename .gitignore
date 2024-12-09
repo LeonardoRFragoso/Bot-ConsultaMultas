@@ -17,6 +17,7 @@ ENV/
 *.env
 config.ini
 config.json
+secrets.json
 
 # macOS file system files
 .DS_Store
@@ -41,8 +42,9 @@ build/
 dist/
 *.egg-info/
 
-# VSCode settings
+# IDE settings
 .vscode/
+.idea/
 
 # 2Captcha API key (if stored in a file)
 api_key.txt
