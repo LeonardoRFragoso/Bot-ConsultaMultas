@@ -67,31 +67,41 @@ def extrair_multas(driver):
     print("Iniciando extração das multas...")
     multas = []
     i = 1
-    while True:
-        try:
+    try:
+        while True:
+            # Localizar a tabela pelo índice dinâmico
             tabela_xpath = f"//*[@id='caixaTabela']/div[4]/table[{i}]"
-            tabela = WebDriverWait(driver, 30).until(
+            tabela = WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.XPATH, tabela_xpath))
             )
+            print(f"Tabela {i} encontrada. Processando...")
+            
+            # Localizar todas as linhas na tabela
             linhas = tabela.find_elements(By.TAG_NAME, 'tr')
-
             for linha in linhas:
-                dados = linha.find_elements(By.TAG_NAME, 'td')
-                if len(dados) > 1:  # Filtra linhas que contêm dados
+                # Localizar todas as colunas (células) em cada linha
+                colunas = linha.find_elements(By.TAG_NAME, 'td')
+                if len(colunas) > 1:  # Apenas processar linhas com dados relevantes
                     multa = {
-                        'Auto de Infração': dados[0].text,
-                        'Auto de Renavam': dados[1].text,
-                        'Data de Pagamento com Desconto': dados[2].text,
-                        'Enquadramento da Infração': dados[3].text,
-                        'Valor Original': dados[6].text,
-                        'Valor a Ser Pago': dados[7].text
+                        'Auto de Infração': colunas[0].text if len(colunas) > 0 else '',
+                        'Auto de Renavam': colunas[1].text if len(colunas) > 1 else '',
+                        'Data para Pagamento com Desconto': colunas[2].text if len(colunas) > 2 else '',
+                        'Enquadramento da Infração': colunas[3].text if len(colunas) > 3 else '',
+                        'Data da Infração': colunas[4].text if len(colunas) > 4 else '',
+                        'Hora': colunas[5].text if len(colunas) > 5 else '',
+                        'Placa Relacionada': colunas[6].text if len(colunas) > 6 else '',
+                        'Valor Original R$': colunas[7].text if len(colunas) > 7 else '',
+                        'Valor a Ser Pago R$': colunas[8].text if len(colunas) > 8 else '',
+                        'Órgão Emissor': colunas[9].text if len(colunas) > 9 else ''
                     }
                     multas.append(multa)
-            print(f"Tabela {i} extraída com sucesso.")
+            print(f"Tabela {i} processada com sucesso.")
             i += 1  # Avançar para a próxima tabela
-        except Exception as e:
-            print(f"Sem mais tabelas a serem processadas ou erro: {e}")
-            break  # Interrompe quando não encontrar mais tabelas ou erro
+    except Exception as e:
+        if i == 1:
+            print("Nenhuma tabela encontrada no iframe.")
+        else:
+            print(f"Fim das tabelas ou erro ao processar tabela {i}: {e}")
     
     print(f"{len(multas)} multa(s) extraída(s).")
     return multas
@@ -101,7 +111,7 @@ def consulta_multas(driver, renavam, cpf_cnpj):
         print(f"Iniciando consulta para RENAVAM: {renavam}, CPF/CNPJ: {cpf_cnpj}")
         driver.get(PAGE_URL)
 
-        # Esperar o iframe ser carregado completamente
+        # Aguardar e mudar para o iframe
         iframe = WebDriverWait(driver, 20).until(
             EC.frame_to_be_available_and_switch_to_it((By.XPATH, '//*[@id="frameConsulta"]'))
         )
@@ -118,7 +128,7 @@ def consulta_multas(driver, renavam, cpf_cnpj):
         )
         cpf_field.send_keys(str(cpf_cnpj))
 
-        # Resolver o reCAPTCHA
+        # Resolver o CAPTCHA
         token = obter_token_captcha(API_KEY, SITE_KEY, PAGE_URL)
         captcha_response = WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.ID, 'g-recaptcha-response'))
@@ -132,24 +142,32 @@ def consulta_multas(driver, renavam, cpf_cnpj):
         consultar_button.click()
         print("Botão 'Consultar' clicado com sucesso.")
 
-        # Aguardar pelo menos 10 segundos antes de verificar se as tabelas ou a mensagem foram carregadas
+        # Aguardar 10 segundos
         time.sleep(10)
 
-        # Verificar se a mensagem "Não há multa" aparece
+        # Verificar mensagem de "não há multas"
         try:
-            mensagem_sem_multas = WebDriverWait(driver, 10).until(
+            mensagem = WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.XPATH, '//*[contains(text(),"Não há multa")]'))
             )
-            print("Mensagem de não há multas encontrada. Recarregando a página e buscando próximo RENAVAM.")
-            driver.refresh()  # Recarregar a página
-            return []  # Retornar lista vazia, indicando que não há multas
-        except Exception as e:
-            print("Nenhuma mensagem de não há multas encontrada, buscando por tabelas...")
+            print("Mensagem de 'Não há multas' encontrada. Pulando para o próximo RENAVAM.")
+            return []
+        except:
+            print("Nenhuma mensagem de 'Não há multas' encontrada. Buscando por tabelas...")
 
-        # Extrair os dados das multas
+        # Verificar mensagem de "Este veículo não consta no cadastro"
+        try:
+            mensagem_nao_consta = WebDriverWait(driver, 5).until(
+                EC.presence_of_element_located((By.XPATH, '//*[@id="caixaInformacao"]'))
+            )
+            if "não consta no cadastro" in mensagem_nao_consta.text:
+                print("Mensagem de 'Veículo não consta no cadastro' encontrada. Pulando para o próximo RENAVAM.")
+                return []
+        except:
+            pass
+
+        # Extrair multas
         multas = extrair_multas(driver)
-        print(f"Multas encontradas para RENAVAM {renavam}: {len(multas)}")
-
         return multas
 
     except Exception as e:
@@ -167,6 +185,9 @@ def main():
     # Inicializar o navegador
     driver = iniciar_navegador()
 
+    # Criar uma nova lista para armazenar as multas extraídas
+    resultados = []
+
     # Iterar sobre as linhas da planilha
     for index, row in df.iterrows():
         renavam = row['RENAVAM']
@@ -174,13 +195,17 @@ def main():
         print(f"Consultando para RENAVAM: {renavam}, CNPJ: {cnpj}")
         multas = consulta_multas(driver, renavam, cnpj)
 
-        # Armazenar as multas encontradas na planilha
-        df.at[index, 'Resultado'] = multas if multas else "Sem multas registradas"
+        # Armazenar as multas encontradas
+        resultados.append({
+            'RENAVAM': renavam,
+            'CNPJ': cnpj,
+            'Multas': multas if multas else "Sem multas registradas"
+        })
 
-    # Salvar os resultados em um novo arquivo
-    output_file = FILE_PATH.replace(".xlsx", "_resultado.xlsx")
-    df.to_excel(output_file, index=False)
-    print(f"Resultados salvos em: {output_file}")  # Print informando que os resultados foram salvos
+    # Criar um DataFrame com os resultados e salvar em uma nova planilha
+    resultados_df = pd.DataFrame(resultados)
+    resultados_df.to_excel("resultados.xlsx", index=False)
+    print(f"Resultados salvos em: resultados.xlsx")
 
     # Fechar o navegador
     driver.quit()
