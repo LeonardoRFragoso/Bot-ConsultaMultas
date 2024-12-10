@@ -145,10 +145,17 @@ def extrair_multas_dos_iframes(driver):
         for tabela_index, tabela in enumerate(tabelas, start=1):
             try:
                 linhas = tabela.find_elements(By.TAG_NAME, 'tr')
-                multa = {}
+                if not linhas:
+                    print(f"Tabela {tabela_index} vazia ou não contém linhas.")
+                    continue
 
+                multa = {}
                 for linha_index, linha in enumerate(linhas):
                     colunas = linha.find_elements(By.TAG_NAME, 'td')
+
+                    if not colunas:
+                        print(f"Linha {linha_index + 1} da tabela {tabela_index} não contém colunas.")
+                        continue
                     
                     # Atualizar lógica de mapeamento com base na estrutura visualizada
                     if linha_index == 0 and len(colunas) >= 3:
