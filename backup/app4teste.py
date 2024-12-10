@@ -2,7 +2,7 @@ import os
 import time
 import pandas as pd
 import requests
-import json
+import sqlite3
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -112,17 +112,6 @@ def consulta_multas(driver, renavam, cnpj):
         except:
             print("Nenhuma mensagem de 'Não há multas' encontrada. Buscando por tabelas...")
 
-        # Verificar a mensagem de "Este veículo não consta no cadastro"
-        try:
-            mensagem_nao_consta = WebDriverWait(driver, 5).until(
-                EC.presence_of_element_located((By.XPATH, '//*[@id="caixaInformacao"]'))
-            )
-            if "não consta no cadastro" in mensagem_nao_consta.text:
-                print("Mensagem de 'Veículo não consta no cadastro' encontrada. Pulando para o próximo RENAVAM.")
-                return []
-        except:
-            pass
-
         # Agora que o botão foi clicado e o sistema retornou as informações, vamos procurar as divs com as multas
         return extrair_multas_dos_iframes(driver)
 
@@ -135,77 +124,128 @@ def extrair_multas_dos_iframes(driver):
     multas = []
 
     try:
-        # Localizar a div 'caixaTabela' e capturar todas as tabelas de multas
+        # Aguardar até que a div 'caixaTabela' esteja disponível dentro do iframe
         caixa_tabela = WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.XPATH, '//*[@id="caixaTabela"]'))
         )
+        print("Elemento 'caixaTabela' encontrado.")
+
         tabelas = caixa_tabela.find_elements(By.XPATH, './/table[@class="tabelaDescricao"]')
-        print(f"{len(tabelas)} tabela(s) encontrada(s).")
+        print(f"{len(tabelas)} tabela(s) de multas encontrada(s).")
 
-        for tabela_index, tabela in enumerate(tabelas, start=1):
-            try:
-                linhas = tabela.find_elements(By.TAG_NAME, 'tr')
-                multa = {}
-
-                for linha_index, linha in enumerate(linhas):
-                    colunas = linha.find_elements(By.TAG_NAME, 'td')
-                    
-                    # Atualizar lógica de mapeamento com base na estrutura visualizada
-                    if linha_index == 0 and len(colunas) >= 3:
-                        multa['Auto_de_Inflacao'] = colunas[0].text.split(":", 1)[-1].strip()
-                        multa['Auto_de_Renainf'] = colunas[1].text.split(":", 1)[-1].strip()
-                        multa['Data_para_Pagamento_com_Desconto'] = colunas[2].text.split(":", 1)[-1].strip()
-
-                    elif linha_index == 1 and len(colunas) >= 3:
-                        multa['Enquadramento_da_Inflacao'] = colunas[0].text.split(":", 1)[-1].strip()
-                        multa['Data_da_Inflacao'] = colunas[1].text.split(":", 1)[-1].strip()
-                        multa['Hora'] = colunas[2].text.split(":", 1)[-1].strip()
-
-                    elif linha_index == 2 and len(colunas) >= 2:
-                        multa['Descricao'] = colunas[0].text.split(":", 1)[-1].strip()
-                        multa['Placa_Relacionada'] = colunas[1].text.split(":", 1)[-1].strip()
-
-                    elif linha_index == 3 and len(colunas) >= 3:
-                        multa['Local_da_Inflacao'] = colunas[0].text.split(":", 1)[-1].strip()
-                        multa['Valor_Original_R'] = colunas[1].text.split(":", 1)[-1].strip()
-                        multa['Valor_a_Ser_Pago_R'] = colunas[2].text.split(":", 1)[-1].strip()
-
-                    elif linha_index == 4 and len(colunas) >= 3:
-                        multa['Status_do_Pagamento'] = colunas[0].text.split(":", 1)[-1].strip()
-                        multa['Orgao_Emissor'] = colunas[1].text.split(":", 1)[-1].strip()
-                        multa['Agente_Emissor'] = colunas[2].text.split(":", 1)[-1].strip()
-
-                # Validar se os campos essenciais foram preenchidos
-                if multa.get('Auto_de_Inflacao') and multa.get('Auto_de_Renainf'):
-                    multas.append(multa)
-                    print(f"Tabela {tabela_index} processada com sucesso.")
-                else:
-                    print(f"Tabela {tabela_index} ignorada devido a dados incompletos.")
-
-            except Exception as e:
-                print(f"Erro ao processar tabela {tabela_index}: {e}")
+        for tabela in tabelas:
+            linhas = tabela.find_elements(By.TAG_NAME, 'tr')
+            multa = {}
+            for linha in linhas:
+                colunas = linha.find_elements(By.TAG_NAME, 'td')
+                if len(colunas) == 2:
+                    chave = colunas[0].text.strip().replace(":", "").replace("\n", "_").replace(" ", "_")
+                    valor = colunas[1].text.strip()
+                    multa[chave] = valor
+            multas.append(multa)
 
     except Exception as e:
-        print(f"Erro ao localizar as tabelas de multas: {e}")
+        print(f"Erro ao localizar a div 'caixaTabela': {e}")
 
     return multas
 
-def salvar_dados_em_json(multas, output_path="multas.json"):
-    try:
-        if os.path.exists(output_path):
-            with open(output_path, "r", encoding="utf-8") as file:
-                dados_existentes = json.load(file)
-        else:
-            dados_existentes = []
+def criar_banco_e_inserir_dados(multas):
+    conn = sqlite3.connect("multas.db")
+    cursor = conn.cursor()
 
-        dados_existentes.extend(multas)
+    cursor.execute("""DROP TABLE IF EXISTS multas""")
+    cursor.execute("""
+    CREATE TABLE multas (
+        Auto_de_Infracao TEXT,
+        Auto_de_Renainf TEXT,
+        Data_para_Pagamento_com_Desconto TEXT,
+        Enquadramento_da_Infracao TEXT,
+        Data_da_Infracao TEXT,
+        Hora TEXT,
+        Descricao TEXT,
+        Local_da_Infracao TEXT,
+        Placa_Relacionada TEXT,
+        Valor_Original_R REAL,
+        Valor_a_Ser_Pago_R REAL,
+        Orgao_Emissor TEXT,
+        Agente_Emissor TEXT,
+        Status_do_Pagamento TEXT,
+        Data_da_Consulta TEXT
+    )
+    """)
 
-        with open(output_path, "w", encoding="utf-8") as file:
-            json.dump(dados_existentes, file, ensure_ascii=False, indent=4)
-        
-        print(f"Dados salvos no arquivo {output_path} com sucesso!")
-    except Exception as e:
-        print(f"Erro ao salvar dados em JSON: {e}")
+        for multa in multas:
+        # Garantir que os valores monetários sejam convertidos corretamente para números reais
+        try:
+            if "Valor_Original_R" in multa and multa["Valor_Original_R"]:
+                multa["Valor_Original_R"] = float(multa["Valor_Original_R"].replace(",", "."))
+            else:
+                multa["Valor_Original_R"] = None
+
+            if "Valor_a_Ser_Pago_R" in multa and multa["Valor_a_Ser_Pago_R"]:
+                multa["Valor_a_Ser_Pago_R"] = float(multa["Valor_a_Ser_Pago_R"].replace(",", "."))
+            else:
+                multa["Valor_a_Ser_Pago_R"] = None
+        except ValueError:
+            multa["Valor_Original_R"] = None
+            multa["Valor_a_Ser_Pago_R"] = None
+
+        # Garantir que todos os campos esperados estejam preenchidos
+        campos_obrigatorios = [
+            "Auto_de_Infracao", "Auto_de_Renainf", "Data_para_Pagamento_com_Desconto",
+            "Enquadramento_da_Infracao", "Data_da_Infracao", "Hora", "Descricao",
+            "Local_da_Infracao", "Placa_Relacionada", "Valor_Original_R", "Valor_a_Ser_Pago_R",
+            "Orgao_Emissor", "Agente_Emissor", "Status_do_Pagamento", "Data_da_Consulta"
+        ]
+
+        for campo in campos_obrigatorios:
+            if campo not in multa:
+                multa[campo] = None
+
+        # Adicionar a data da consulta
+        multa["Data_da_Consulta"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Inserir os dados da multa no banco
+        cursor.execute("""
+        INSERT INTO multas (
+            Auto_de_Infracao,
+            Auto_de_Renainf,
+            Data_para_Pagamento_com_Desconto,
+            Enquadramento_da_Infracao,
+            Data_da_Infracao,
+            Hora,
+            Descricao,
+            Local_da_Infracao,
+            Placa_Relacionada,
+            Valor_Original_R,
+            Valor_a_Ser_Pago_R,
+            Orgao_Emissor,
+            Agente_Emissor,
+            Status_do_Pagamento,
+            Data_da_Consulta
+        ) VALUES (
+            :Auto_de_Infracao,
+            :Auto_de_Renainf,
+            :Data_para_Pagamento_com_Desconto,
+            :Enquadramento_da_Infracao,
+            :Data_da_Infracao,
+            :Hora,
+            :Descricao,
+            :Local_da_Infracao,
+            :Placa_Relacionada,
+            :Valor_Original_R,
+            :Valor_a_Ser_Pago_R,
+            :Orgao_Emissor,
+            :Agente_Emissor,
+            :Status_do_Pagamento,
+            :Data_da_Consulta
+        )
+        """, multa)
+
+    # Confirmar as alterações no banco e fechar a conexão
+    conn.commit()
+    conn.close()
+    print("Dados inseridos no banco de dados com sucesso!")
 
 def main():
     # Ler a planilha
@@ -216,7 +256,6 @@ def main():
 
     driver = iniciar_navegador()
     resultados = []
-    sem_multas = []
 
     for index, row in df.iterrows():
         renavam = row['RENAVAM']
@@ -225,18 +264,13 @@ def main():
 
         if multas:
             resultados.extend(multas)
-        else:
-            sem_multas.append({'RENAVAM': renavam, 'CNPJ': cnpj, 'Status': 'Sem multas registradas'})
 
-    # Salvar os resultados no arquivo JSON
-    salvar_dados_em_json(resultados)
-
-    # Salvar RENAVAM sem multas em uma aba separada (opcional)
-    if sem_multas:
-        pd.DataFrame(sem_multas).to_excel("SemMultas.xlsx", index=False)
+    # Inserir no banco de dados
+    criar_banco_e_inserir_dados(resultados)
 
     print("Processo concluído!")
     driver.quit()
 
 if __name__ == "__main__":
     main()
+

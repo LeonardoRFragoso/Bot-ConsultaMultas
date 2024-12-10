@@ -2,14 +2,13 @@ import os
 import time
 import pandas as pd
 import requests
-import json
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from dotenv import load_dotenv
-from datetime import datetime
+from organizar_multas import organizar_dados  # Importa o script de organização
 
 # Carregar variáveis de ambiente do arquivo .env
 load_dotenv()
@@ -135,108 +134,94 @@ def extrair_multas_dos_iframes(driver):
     multas = []
 
     try:
-        # Localizar a div 'caixaTabela' e capturar todas as tabelas de multas
+        # Aguardar até que a div 'caixaTabela' esteja disponível dentro do iframe
         caixa_tabela = WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.XPATH, '//*[@id="caixaTabela"]'))
         )
+        print("Elemento 'caixaTabela' encontrado.")
+
+        # Buscar todas as tabelas dentro da div caixaTabela
         tabelas = caixa_tabela.find_elements(By.XPATH, './/table[@class="tabelaDescricao"]')
-        print(f"{len(tabelas)} tabela(s) encontrada(s).")
+        print(f"{len(tabelas)} tabela(s) de multas encontrada(s).")
 
         for tabela_index, tabela in enumerate(tabelas, start=1):
             try:
                 linhas = tabela.find_elements(By.TAG_NAME, 'tr')
-                multa = {}
-
-                for linha_index, linha in enumerate(linhas):
+                for linha in linhas:
                     colunas = linha.find_elements(By.TAG_NAME, 'td')
-                    
-                    # Atualizar lógica de mapeamento com base na estrutura visualizada
-                    if linha_index == 0 and len(colunas) >= 3:
-                        multa['Auto_de_Inflacao'] = colunas[0].text.split(":", 1)[-1].strip()
-                        multa['Auto_de_Renainf'] = colunas[1].text.split(":", 1)[-1].strip()
-                        multa['Data_para_Pagamento_com_Desconto'] = colunas[2].text.split(":", 1)[-1].strip()
-
-                    elif linha_index == 1 and len(colunas) >= 3:
-                        multa['Enquadramento_da_Inflacao'] = colunas[0].text.split(":", 1)[-1].strip()
-                        multa['Data_da_Inflacao'] = colunas[1].text.split(":", 1)[-1].strip()
-                        multa['Hora'] = colunas[2].text.split(":", 1)[-1].strip()
-
-                    elif linha_index == 2 and len(colunas) >= 2:
-                        multa['Descricao'] = colunas[0].text.split(":", 1)[-1].strip()
-                        multa['Placa_Relacionada'] = colunas[1].text.split(":", 1)[-1].strip()
-
-                    elif linha_index == 3 and len(colunas) >= 3:
-                        multa['Local_da_Inflacao'] = colunas[0].text.split(":", 1)[-1].strip()
-                        multa['Valor_Original_R'] = colunas[1].text.split(":", 1)[-1].strip()
-                        multa['Valor_a_Ser_Pago_R'] = colunas[2].text.split(":", 1)[-1].strip()
-
-                    elif linha_index == 4 and len(colunas) >= 3:
-                        multa['Status_do_Pagamento'] = colunas[0].text.split(":", 1)[-1].strip()
-                        multa['Orgao_Emissor'] = colunas[1].text.split(":", 1)[-1].strip()
-                        multa['Agente_Emissor'] = colunas[2].text.split(":", 1)[-1].strip()
-
-                # Validar se os campos essenciais foram preenchidos
-                if multa.get('Auto_de_Inflacao') and multa.get('Auto_de_Renainf'):
-                    multas.append(multa)
-                    print(f"Tabela {tabela_index} processada com sucesso.")
-                else:
-                    print(f"Tabela {tabela_index} ignorada devido a dados incompletos.")
-
+                    if len(colunas) > 1:  # Apenas processar linhas com dados relevantes
+                        multa = {
+                            'Auto de Infração': colunas[0].text if len(colunas) > 0 else '',
+                            'Auto de Renavam': colunas[1].text if len(colunas) > 1 else '',
+                            'Data para Pagamento com Desconto': colunas[2].text if len(colunas) > 2 else '',
+                            'Enquadramento da Infração': colunas[3].text if len(colunas) > 3 else '',
+                            'Data da Infração': colunas[4].text if len(colunas) > 4 else '',
+                            'Hora': colunas[5].text if len(colunas) > 5 else '',
+                            'Placa Relacionada': colunas[6].text if len(colunas) > 6 else '',
+                            'Valor Original R$': colunas[7].text if len(colunas) > 7 else '',
+                            'Valor a Ser Pago R$': colunas[8].text if len(colunas) > 8 else '',
+                            'Órgão Emissor': colunas[9].text if len(colunas) > 9 else ''
+                        }
+                        multas.append(multa)
+                print(f"Tabela {tabela_index} processada com sucesso.")
             except Exception as e:
                 print(f"Erro ao processar tabela {tabela_index}: {e}")
 
     except Exception as e:
-        print(f"Erro ao localizar as tabelas de multas: {e}")
+        print(f"Erro ao localizar a div 'caixaTabela' ou as tabelas: {e}")
 
+    # Retornar ao contexto principal
+    driver.switch_to.default_content()
+    print(f"{len(multas)} multa(s) extraída(s) no total.")
     return multas
-
-def salvar_dados_em_json(multas, output_path="multas.json"):
-    try:
-        if os.path.exists(output_path):
-            with open(output_path, "r", encoding="utf-8") as file:
-                dados_existentes = json.load(file)
-        else:
-            dados_existentes = []
-
-        dados_existentes.extend(multas)
-
-        with open(output_path, "w", encoding="utf-8") as file:
-            json.dump(dados_existentes, file, ensure_ascii=False, indent=4)
-        
-        print(f"Dados salvos no arquivo {output_path} com sucesso!")
-    except Exception as e:
-        print(f"Erro ao salvar dados em JSON: {e}")
 
 def main():
     # Ler a planilha
     df = pd.read_excel(FILE_PATH)
 
+    # Validar as variáveis carregadas
     if not API_KEY or not SITE_KEY or not DRIVER_PATH:
         raise Exception("API_KEY, SITE_KEY ou DRIVER_PATH não configurados corretamente no .env")
 
+    # Inicializar o navegador
     driver = iniciar_navegador()
-    resultados = []
+
+    # Criar um dicionário para organizar as abas do Excel
+    resultados = {}
     sem_multas = []
 
+    # Iterar sobre as linhas da planilha
     for index, row in df.iterrows():
         renavam = row['RENAVAM']
-        cnpj = row['CNPJ']
+        cnpj = row['CNPJ']  # Ajustado para usar 'CNPJ' como no cabeçalho da planilha
+        print(f"Consultando para RENAVAM: {renavam}, CNPJ: {cnpj}")
         multas = consulta_multas(driver, renavam, cnpj)
 
         if multas:
-            resultados.extend(multas)
+            # Criar DataFrame para o RENAVAM atual
+            resultados[renavam] = pd.DataFrame(multas)
         else:
+            # Adicionar à lista de RENAVAM sem multas
             sem_multas.append({'RENAVAM': renavam, 'CNPJ': cnpj, 'Status': 'Sem multas registradas'})
 
-    # Salvar os resultados no arquivo JSON
-    salvar_dados_em_json(resultados)
+    # Salvar os resultados em um arquivo Excel com múltiplas abas
+    with pd.ExcelWriter("resultados_organizados.xlsx") as writer:
+        for renavam, multas_df in resultados.items():
+            multas_df.to_excel(writer, sheet_name=str(renavam), index=False)
+        
+        if sem_multas:
+            # Salvar os RENAVAM sem multas em uma aba separada
+            pd.DataFrame(sem_multas).to_excel(writer, sheet_name="Sem Multas", index=False)
 
-    # Salvar RENAVAM sem multas em uma aba separada (opcional)
-    if sem_multas:
-        pd.DataFrame(sem_multas).to_excel("SemMultas.xlsx", index=False)
+    print("Resultados salvos em: resultados_organizados.xlsx")
 
-    print("Processo concluído!")
+    # Fechar o navegador
     driver.quit()
+
+    # Chamar o script de organização
+    print("Organizando os dados...")
+    organizar_dados()
+    print("Organização concluída!")
 
 if __name__ == "__main__":
     main()
